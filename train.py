@@ -21,7 +21,7 @@ from model import GPT, GPTConfig
 # ------------------------------------------------------------------------------
 # I/O
 out_dir = 'out'
-eval_interval = 4   # eval every eval_interval iterations (micro steps or iters when gradient_accumulation_steps > 1)
+eval_interval = 10   # eval every eval_interval iterations (micro steps or iters when gradient_accumulation_steps > 1)
 log_interval = 1
 eval_iters = 200
 eval_only = False   # if True, script exits right after the first eval
@@ -32,6 +32,9 @@ init_from = 'scracth'   # 'scratch' or 'resume' or 'gpt2'
 wandb_log = True
 wandb_project = 'sentiment_gpt_esp'
 wandb_run_name = 'gpt2-sentiment-' + time.strftime("%Y-%m-%d-%H:%M:%S")
+num_samples = 5
+max_new_tokens = 140
+temperature = 0.9
 
 # data
 dataset = 'by_char'
@@ -47,8 +50,8 @@ dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
 
 # adamw optimizer
-learning_rate = 3e-4    # max learning rate
-max_iters = 500         # total number of training iterations
+learning_rate = 6e-4    # max learning rate
+max_iters = 20000         # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -57,7 +60,7 @@ grad_clip = 1.0 # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True    # whether to decay the learning rate
 warmup_iters = 200 # how many steps to warm up for
-lr_decay_iters = 800 # should be ~= max_iters per Chinchilla
+lr_decay_iters = 19000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5   # minimmum learning rate, should be ~= learning_rate / 10 per Chinchilla
 
 # system
@@ -72,7 +75,7 @@ config = {k: globals()[k] for k in config_keys}
 # we are running on a single gpu, and one process
 master_process = True
 seed_offset = 0
-gradient_accumulation_steps *= 8  # simulate 8 gpus
+gradient_accumulation_steps *= 4  # simulate 8 gpus
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
@@ -164,6 +167,17 @@ def estimate_loss():
     model.train()
     return out
 
+# function to get samples from the model, for logging in WandB
+@torch.no_grad()
+def get_samples():
+    model.eval()
+    out = []
+    for k in range(num_samples):
+            y = model.generate(idx=torch.zeros((1, block_size), dtype=torch.long, device=device), max_new_tokens=max_new_tokens, temperature=temperature)
+            out.append(f"({k+1}) {decode(y[0][block_size:].tolist())}")
+    model.train()
+    return '\n'.join(out)
+
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
@@ -182,6 +196,7 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    table = wandb.Table(columns=["iter_num", "samples", "train_loss", "val_loss"])
 
 # training loop
 X, Y = get_batch('train')   # fetch the very first batch
@@ -206,6 +221,9 @@ while True:
                 "val/loss": losses['val'],
                 "lr": lr,
                 })
+
+            table.add_data(iter_num, get_samples(), losses['train'], losses['val'])
+
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
             if iter_num > 0:
@@ -256,4 +274,5 @@ while True:
 
     # termination conditions
     if iter_num > max_iters:
+        wandb.log({"sample_table": table}, commit=False)
         break
