@@ -8,7 +8,9 @@ Estrategia:
 
 Se puede ver las configuraciones de entrenamiento en W&B: [`sentiment_gpt_esp`](https://wandb.ai/alcazar90/sentiment_gpt_esp?workspace=user-alcazar90).
 
-Algunos textos generados por el modelo: 
+
+Muestras de 250 carácteres generadas por último checkpoint de modelo
+no-supervisado (run [`gpt2-sentiment-2023-04-11-21:17:13`](https://wandb.ai/alcazar90/sentiment_gpt_esp?workspace=user-alcazar90)).
 
 ```bash
 (1)   El Europeo y la fue agresadez y con tiempo de que decir la mujer. Viejeron.@user Aumitivos llegando la pelotude para favor se promuevitieron a la forma que en el duelo se demora en el año play nlamas telesería que era pensar a jajajajajajajajajaja 
@@ -32,6 +34,17 @@ Algunos textos generados por el modelo:
 (19)     El bis en el nuevo inflacereta k sientoma a esa wea ctm https://t.co/8t6zJfi8JHajajajajaja si se sarto es bueno hace otros muertos países con el DT eaaaaaaaaas que no tienes a la izquierda y metieron los hombres.@user Hijo de puta con los artific
 (20)      #LaFamilio hajajajajaja no lo hizo más renuncio habla bla hacer peruanos lo mismo beha del reflejo sexual no 🤣 https://t.co/ANqSpuXPZ@user Pero es el respeto que se hay un pidistito y nuevo gran compatriotas. No sé que alguna muñeca son totalmen
 ```
+
+## todos
+
+- Arreglar logging de tabla wandb.Table con trackeo de muestras generadas por nivel de loss
+- Crear `GPTClassifier` que utilicé última versión de modelo no-supervisado y entrenarlo sobre los datos con etiqueta
+- Crear pipeline de evaluación métricas de competencia
+- Crear archivos para generar dataset utilizando tokenizador [`tiktoken`](https://github.com/openai/tiktoken) a nivel de subpalaras en: `data/by_tiktoken`
+- Agregar jupyter notebook con uso de modelo para generación de muestras + ejemplo `GPTClassifier`
+- Extender código para entrenar desde último mejor checkpoint guardado
+- Es posible realizar logging de datos en W&B desde la última iteración? Es decir, que registré la información a partir de la iteración correspondiente en modelos que se continua el entrenamiento
+
 
 ## acknowledgements
 
