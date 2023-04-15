@@ -3,6 +3,7 @@ Definition of a GPT Language Model based on Karpathy nanoGPT.
 
 Source: https://github.com/karpathy/nanoGPT/blob/master/model.py
 """
+import math
 import numpy as np
 
 import inspect
@@ -12,6 +13,13 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+
+def new_gelu(x):
+    """
+    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
+    Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
+    """
+    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=Fase """
@@ -72,15 +80,16 @@ class FeedForward(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.net = nn.Sequential(*[
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.ReLU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout),
-        ])
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        return self.net(x)
+        x = self.c_fc(x)
+        x = new_gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
 
 class Block(nn.Module):
     """ Transformer block: communication followed by computation """
@@ -89,13 +98,13 @@ class Block(nn.Module):
         # n_embd: embedding dimension,
         # n_head: the number of heads we'd like
         super().__init__()
-        self.sa = MultiHeadAttention(config)
+        self.ln1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = MultiHeadAttention(config)
+        self.ln2 = LayerNorm(config.n_embd, bias=config.bias)
         self.ffwd = FeedForward(config)
-        self.ln1 = nn.LayerNorm(config.n_embd)
-        self.ln2 = nn.LayerNorm(config.n_embd)
 
     def forward(self, x):
-        x = x + self.sa(self.ln1(x))
+        x = x + self.attn(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
         return x
     
@@ -125,6 +134,20 @@ class GPT(nn.Module):
         self.ln_f = LayerNorm(config.n_embd, bias=config.bias)    # final layer norm
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # with weight tying: https://paperswithcode.com/method/weight-tying
+        self.token_embedding_table.weight = self.lm_head.weight
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projects, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+
+        # report the number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6))
 
     def forward(self, idx, targets=None):
         device=idx.device
@@ -161,6 +184,14 @@ class GPT(nn.Module):
             n_params -= self.token_embedding_table.weight.numel()
             n_params -= self.position_embedding_table.weight.numel()
         return n_params
+    
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         """
@@ -190,6 +221,15 @@ class GPT(nn.Module):
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     # weights oof blacklist modules will NOT be weight decayed
                     no_decay.add(fpn)
+        # subtle: 'token_embedding_table.weight' and 'lm_head.weight' are tied,
+        # so they will appear in the no_decay and decay sets respectively after
+        # the above. 
+        # In addition, because named_parameters() doesn't return duplicates, it
+        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
+        # so let's manually remove 'lm_head.weight' from decay set. This will include
+        # this tensor into optimization via transformer.wte.weight only, and not decayed.
+        # validate that we considered every parameter
+        decay.remove('lm_head.weight')
 
         # validate that we considered every parameter
         param_dict = {pn: p for pn, p in self.named_parameters()}
