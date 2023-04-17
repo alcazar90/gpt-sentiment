@@ -5,6 +5,7 @@
 
 import torch
 
+@torch.no_grad()
 def estimate_loss(model, loader, loss_fn, device, return_acc=False):
     """ 
         Computa la pérdida promedio de un modelo en un loader de datos.
