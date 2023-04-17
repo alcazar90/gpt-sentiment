@@ -1,6 +1,6 @@
 # extended dataset, character-level
 
-Include as corpus `train.tsv` + `reddit_chile_data_vs20k.csv` (20k reddit post from subreddit chile).
+Include as corpus `train.tsv` + `20230415_api_reddit.csv` (20k reddit post from subreddit chile).
 After running `prepare.py`:
 
 
