@@ -6,18 +6,36 @@ the ids, and meta.pkl containing the encoder and decoder and some other
 related info.
 """
 import os
+import re
 import pickle
+import string
+import regex
 import numpy as np
+import pandas as pd
 
 
-# open train.tsv file and only read the second column of each line
-with open("./data/train.tsv", "r") as f:
-    data = f.read()
-    data = data.split('\n')
-    data = [row.split('\t') for row in data][:-1]
-    data = [row[1] for row in data[1:] if len(row) == 3]
-    data = ''.join(data)
+def text_preprocessor(text):
+    text = text.lower()
+    patron = "[" + re.escape(string.punctuation + "¡¿“”…") + "]"
+    text = re.sub(patron, "", text)
+    text = re.sub("\d+", "", text)
+    text = re.sub('\n', ' ', text)
+    text = re.sub("[\n\t\rf\v]", "", text)
+    text = re.sub("[\u200e\u200d\u00A0\u2003\u2002\u200B\u2028\u2029\uFEFF]", "", text)
+    text = re.sub(r'([aeiou])\1+', r'\1', text)
+    # "Lemmatizador" de chilenismos
+    text = re.sub(r"\b(reweon|weoncito|weono|wn)\b", "weon", text)
+    text = re.sub(r"\b(aweonamientos|aweonado|aweonáo|aweonamiento|aweonaos)\b", "aweonao", text)
+    text = re.sub(r"\b(aweoná|aweona|aweonas|weonas|weonesas|reweona)\b", "weona", text)
+    text = re.sub(r"\b(reculiaos|culia|reculia|reculias|qliao|qlia|qliaos|reqliaos|qlias|ql)\b", "culiao", text)
+    text = re.sub(r"\b(ctm|ctmare)\b", "conchetumadre", text)
+    return text 
 
+# open train.tsv file with pandas
+train_df = pd.read_csv('./data/train.tsv', sep='\t')
+
+# create a single string with all the text from train (tweets)
+data = ''.join([text_preprocessor(t) for t in train_df.texto])
 
 print(f"length of dataset in characters: {len(data):,}")
 
@@ -38,7 +56,6 @@ def encode(s):
 def decode(l):
     """decoder: take a list of integers, output a string"""
     return ''.join([itos[i] for i in l])
-
 
 # create the train and val splits
 n = len(data)
