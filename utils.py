@@ -29,6 +29,7 @@ def estimate_loss(model, loader, loss_fn, device, return_acc=False):
         return torch.tensor(losses).mean().item(), (torch.cat(preds) == torch.cat(targets)).float().mean().item()
     return torch.tensor(losses).mean().item()
 
+
 def collect_preds(model, loader, device):
     """ Recolecta las predicciones y etiquetas dado un modelo y un dataloader """
     model.eval()

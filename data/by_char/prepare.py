@@ -20,7 +20,7 @@ def text_preprocessor(text):
     text = re.sub(patron, "", text)
     text = re.sub("\d+", "", text)
     text = re.sub('\n', ' ', text)
-    text = re.sub("[\n\t\rf\v]", "", text)
+    text = re.sub("[\n\t\r\f\v]", "", text)
     text = re.sub("[\u200e\u200d\u00A0\u2003\u2002\u200B\u2028\u2029\uFEFF]", "", text)
     text = re.sub(r'([aeiou])\1+', r'\1', text)
     # "Lemmatizador" de chilenismos

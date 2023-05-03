@@ -20,48 +20,48 @@ from model import GPT, GPTConfig
 
 # ------------------------------------------------------------------------------
 # I/O
-out_dir = 'out'
-eval_interval = 10   # eval every eval_interval iterations (micro steps or iters when gradient_accumulation_steps > 1)
-log_interval = 1
+out_dir = 'out/extended_by_char_out'
+eval_interval = 250   # eval every eval_interval iterations (micro steps or iters when gradient_accumulation_steps > 1)
+log_interval = 30
 eval_iters = 200
 eval_only = False   # if True, script exits right after the first eval
 always_save_checkpoint = False  # if True, always save a checkpoint after each eval
-init_from = 'scracth'   # 'scratch' or 'resume' or 'gpt2'
+init_from = 'scratch'   # 'scratch' or 'resume' or 'gpt2'
 
 # logging
 wandb_log = True
 wandb_project = 'sentiment_gpt_esp'
 wandb_run_name = 'gpt2-sentiment-' + time.strftime("%Y-%m-%d-%H:%M:%S")
-num_samples = 5
+num_samples = 3
 max_new_tokens = 140
 temperature = 0.9
 
 # data
-dataset = 'by_char'
-gradient_accumulation_steps = 2 # used to simulate larger batch sizes
-batch_size = 16 # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_size = 128  # what is the maximum context length for predictions?
+dataset = 'by_char'     # extended_by_char (data augmentation with reddit posts)
+gradient_accumulation_steps = 4 # used to simulate larger batch sizes
+batch_size = 8 # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_size = 256  # what is the maximum context length for predictions?
 
 # model
-n_layer = 3 # how many attentions blocks to stack
+n_layer = 6 # how many attentions blocks to stack
 n_head = 6  # number of attentions heads per layer
 n_embd = 384   # embedding size, should be divisible by n_head (e.g. 384/6 = 64)
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
 
 # adamw optimizer
-learning_rate = 6e-4    # max learning rate
-max_iters = 20000         # total number of training iterations
+learning_rate = 3e-4    # max learning rate
+max_iters = 3000         # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
-beta2 = 0.95
+beta2 = 0.99
 grad_clip = 1.0 # clip gradients at this value, or disable if == 0.0
 
 # learning rate decay settings
 decay_lr = True    # whether to decay the learning rate
-warmup_iters = 200 # how many steps to warm up for
-lr_decay_iters = 19000 # should be ~= max_iters per Chinchilla
-min_lr = 6e-5   # minimmum learning rate, should be ~= learning_rate / 10 per Chinchilla
+warmup_iters = 250 # how many steps to warm up forl
+lr_decay_iters = 2700 # should be ~= max_iters per Chinchilla
+min_lr = 1e-5   # minimmum learning rate, should be ~= learning_rate / 10 per Chinchilla
 
 # system
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -88,9 +88,8 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # load dataset and define data loader
-train_data = np.memmap("./data/by_char/train.bin", dtype=np.uint16, mode='r')
-val_data = np.memmap("./data/by_char/val.bin", dtype=np.uint16, mode='r')
-
+train_data = np.memmap(f"./data/{dataset}/train.bin", dtype=np.uint16, mode='r')
+val_data = np.memmap(f"./data/{dataset}/val.bin", dtype=np.uint16, mode='r')
 
 def get_batch(split):
     data = train_data if split == 'train' else val_data
@@ -110,30 +109,79 @@ best_val_loss = 1e9
 vocab_size = None
 
 # attempt to derive coab_size from the dataset
-with open('./data/by_char/meta.pkl', 'rb') as f:
-    meta = pickle.load(f)
+meta_path = os.path.join(f"./data/{dataset}/meta.pkl")
+meta_vocab_size = None
+if os.path.exists(meta_path):
+
+    with open(f"./data/{dataset}/meta.pkl", 'rb') as f:
+        meta = pickle.load(f)
+
+    meta_vocab_size = meta['vocab_size']
     vocab_size = meta['vocab_size']
+
     itos = meta['itos']
     stoi = meta['stoi']
+    print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
-def encode(s):
-    """encoder: take a string, output a list of integers"""
-    return [stoi[c] for c in s]
+    def encode(s):
+        """encoder: take a string, output a list of integers"""
+        return [stoi[c] for c in s]
+    
+    def decode(l):
+        """decoder: take a list of integers, output a string"""
+        return ''.join([itos[i] for i in l])
 
-def decode(l):
-    """decoder: take a list of integers, output a string"""
-    return ''.join([itos[i] for i in l])
+else:
+    import tiktoken
+    tokenizer = tiktoken.get_encoding('gpt2')
+
+    def encode(s):
+        """encoder: take a string, output a list of integers"""
+        return tokenizer.encode_ordinary(s)
+
+    def decode(l):
+        """decoder: take a list of integers, output a string"""
+        return tokenizer.decode(l)
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, 
                   vocab_size=vocab_size, block_size=block_size, dropout=dropout,
                   bias=bias,)   # start with model_args from command line
 
-if init_from == 'scracth':
+if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
+    # determine the vocab size we'll use for from-scratch training
+    if meta_vocab_size is None:
+        print("defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)")
+    model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
+elif init_from == 'resume':
+    print(f"Resuming training from {out_dir}")
+    # resume training from a checkpoint.
+    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint_model_args = checkpoint['model_args']
+    # force these config attributes to be equal otherwise we can't even resume
+    # training the rest of the attributes (e.g. dropout) can stay as desired from
+    # command line 
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    # create the model
+    gptconf = GPTConfig(**model_args)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    # fix the keys of the state dictionary
+    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+    unwanted_prefix = '_orig_mod'
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
+    iter_num = checkpoint['iter_num']
+    best_val_loss = checkpoint['best_val_loss']
+
 # TODO: add others initialization methods ('resume')
 model.to(device)
 
@@ -214,6 +262,9 @@ while True:
     if iter_num % eval_interval == 0:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        samples_to_save = get_samples()
+        print('samples:\n', samples_to_save)
+        print('----------------------------------------')
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -222,7 +273,7 @@ while True:
                 "lr": lr,
                 })
 
-            table.add_data(iter_num, get_samples(), losses['train'], losses['val'])
+            table.add_data(iter_num, samples_to_save, losses['train'], losses['val'])
 
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
